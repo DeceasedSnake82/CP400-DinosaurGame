@@ -45,8 +45,10 @@ jobs:
         with:
           name: Dino.hh3
           path: Dino.hh3
-      - name: Commit Dino.hh3 to main
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      # Pushes to main, and manual runs (Actions tab -> Run workflow) on any branch, commit the
+      # built file back to the branch they ran on.
+      - name: Commit Dino.hh3 back to the branch
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "github-actions[bot]"
@@ -56,15 +58,5 @@ jobs:
             echo "Dino.hh3 is unchanged"
           else
             git commit -m "Build Dino.hh3 from $(echo "$GITHUB_SHA" | cut -c1-7) [skip ci]"
-            git push
+            git push origin "HEAD:$GITHUB_REF_NAME"
           fi
-      # Manual runs (Actions tab -> Run workflow) also print the file as base64 in the log,
-      # for when the artifact download is not reachable:  base64 -d  turns it back into Dino.hh3
-      - name: Print Dino.hh3 (base64) for manual runs
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          sha256sum Dino.hh3
-          wc -c Dino.hh3
-          echo "-----BEGIN DINO.HH3 BASE64-----"
-          base64 -w 76 Dino.hh3
-          echo "-----END DINO.HH3 BASE64-----"
