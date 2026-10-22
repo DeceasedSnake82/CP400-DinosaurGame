@@ -33,6 +33,7 @@ using gfx::rgb;
 
 #ifdef DINO_HOST
 extern void host_present_rows(int y0, int y1);   // test harness: stands in for the partial LCD update
+extern void host_frame_start();                  // test harness: marks the start of a main-loop pass
 #endif
 
 namespace {
@@ -66,7 +67,7 @@ enum Button { B_PAUSE, B_NIGHT, B_LCD, B_SLOWER, B_FASTER, B_HELP, B_COUNT };
 // Pace. The SDK has no timer, so the speed of the game is set by how long each frame
 // takes: LCD refresh + a busy-wait whose length is the "game speed" setting.
 // ---------------------------------------------------------------------------
-constexpr int MIN_PACE = 1, MAX_PACE = 9, DEFAULT_PACE = 6;
+constexpr int MIN_PACE = 1, MAX_PACE = 9, DEFAULT_PACE = 9;     // 9 = no busy-wait: as fast as the LCD allows
 constexpr uint32_t SPIN_PER_LEVEL = 14000;
 
 // ---------------------------------------------------------------------------
@@ -80,6 +81,10 @@ char msg[40];
 
 bool evJump;                                 // jump pressed since the last tick (key or touch)
 bool touchJump, touchDuck;                   // finger is down on the field/JUMP, on DUCK
+// "Key is down" according to key events (press / held / release), in frames. This backs up
+// Input_GetKeyState polling: the held event repeats while the key stays down.
+constexpr int KEY_EVT_FRAMES = 4;
+int jumpEvt, duckEvt;
 
 void setMsg(const char* s) { gfx::putStr(msg, s); headerDirty = true; }
 
@@ -238,6 +243,15 @@ void spin() {
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
+
+// Do NOT use the SDK's inline Input_GetKeyState(): it hands the address of a 4-byte enum to a
+// function that reads a uint16_t, and on this big-endian CPU that reads the upper half, which
+// is always 0 - so it asks about scancode 0 and never sees the key. Pass a real uint16_t.
+bool keyDown(Input_Scancode sc) {
+    uint16_t code = (uint16_t)sc;
+    return Input_GetKeyStateU(&code);
+}
+
 void onTouch(int dir, int x, int y) {
     if (dir == TOUCH_UP) { touchJump = touchDuck = false; return; }
     if (dir != TOUCH_DOWN) return;
@@ -279,15 +293,28 @@ void onKey(int code) {
     }
 }
 
+// Any key event: keeps the event-based "is it down" state, then handles fresh presses.
+void onKeyEvent(int dir, int code) {
+    int* hold = nullptr;
+    if (code == KEYCODE_UP || code == KEYCODE_EXE) hold = &jumpEvt;
+    else if (code == KEYCODE_DOWN) hold = &duckEvt;
+    if (hold) *hold = dir == KEY_RELEASED ? 0 : KEY_EVT_FRAMES;
+    if (dir == KEY_PRESSED) onKey(code);
+}
+
 // Drains the event queue. When `wait` is set the first call blocks (nothing is animating).
+// The OS keeps reporting KEY_HELD for as long as a key is down, so the drain stops at the first
+// one (and after a handful of calls): looping until "empty" made every frame slow while a key was held.
+constexpr int MAX_EVENTS_PER_FRAME = 8;
 void pollEvents(bool wait) {
-    for (int n = 0; n < 32; ++n) {
+    for (int n = 0; n < MAX_EVENTS_PER_FRAME; ++n) {
         struct Input_Event ev;
         uint8_t* raw = (uint8_t*)&ev;
         for (unsigned i = 0; i < sizeof ev; ++i) raw[i] = 0;
         GetInput(&ev, (n == 0 && wait) ? 0xFFFFFFFF : 0, 0x10);
         if (ev.type == EVENT_KEY) {
-            if (ev.data.key.direction == KEY_PRESSED) onKey(ev.data.key.keyCode);
+            onKeyEvent(ev.data.key.direction, ev.data.key.keyCode);
+            if (ev.data.key.direction == KEY_HELD) break;
         } else if (ev.type == EVENT_TOUCH) {
             onTouch(ev.data.touch_single.direction, ev.data.touch_single.p1_x, ev.data.touch_single.p1_y);
         } else {
@@ -303,24 +330,35 @@ int main() {
     gfx::init();
     dino::init(game, 0x1BADB002u);
     uint32_t saved;
-    if (save::load(saved)) game.hiScore = saved;
+    const int loadErr = save::load(saved);
+    if (loadErr == 0) game.hiScore = saved;
 
     setMsg("PRESS UP OR TAP TO START");
+    if (loadErr != 0 && loadErr != -14 && loadErr != -8 && loadErr != save::ERR_BAD_RECORD) {   // not just "no file yet"
+        char b[40];
+        gfx::putInt(gfx::putStr(b, "HI LOAD ERR "), loadErr);
+        setMsg(b);
+    }
     drawHeader();
     drawPanel();
     headerDirty = panelDirty = false;
 
     while (!quit) {
+#ifdef DINO_HOST
+        host_frame_start();
+#endif
         const bool idleBlock = paused || helpOpen;
         pollEvents(idleBlock);
         if (quit) break;
 
-        const bool keyUp = Input_GetKeyState(ScancodeUp) || Input_GetKeyState(ScancodeEXE);
+        const bool keyUp = keyDown(ScancodeUp) || keyDown(ScancodeEXE);
         dino::Input in;
         in.jumpPress = evJump;
-        in.jumpHeld  = keyUp || touchJump;
-        in.duckHeld  = Input_GetKeyState(ScancodeDown) || touchDuck;
+        in.jumpHeld  = keyUp || jumpEvt > 0 || touchJump;
+        in.duckHeld  = keyDown(ScancodeDown) || duckEvt > 0 || touchDuck;
         evJump = false;
+        if (jumpEvt > 0) --jumpEvt;
+        if (duckEvt > 0) --duckEvt;
 
         const bool animating = !paused && !helpOpen && game.phase != dino::PH_DEAD;
         if (!paused && !helpOpen) {
@@ -328,8 +366,15 @@ int main() {
             dino::step(game, in);
             if (before != dino::PH_RUNNING && game.phase == dino::PH_RUNNING) { msg[0] = 0; headerDirty = true; }
             if (before == dino::PH_RUNNING && game.phase == dino::PH_DEAD) {
-                if (game.newHigh) setMsg(save::store(game.hiScore) ? "NEW HIGH SCORE!" : "NEW HIGH (NOT SAVED)");
-                else setMsg("TAP OR PRESS UP TO RETRY");
+                if (game.newHigh) {
+                    const int err = save::store(game.hiScore);
+                    char b[40];
+                    if (err == 0) gfx::putStr(b, "NEW HIGH SCORE!");
+                    else gfx::putInt(gfx::putStr(b, "NEW HIGH! SAVE ERR "), err);
+                    setMsg(b);
+                } else {
+                    setMsg("TAP OR PRESS UP TO RETRY");
+                }
                 game.newHigh = false;
             }
         }

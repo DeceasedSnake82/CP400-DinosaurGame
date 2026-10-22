@@ -14,8 +14,15 @@ key UP
 frames 20
 shot 02_jumping
 frames 40
+# ducking with key-state polling working ...
+holdshot 03_duck
 hold DOWN 15
-shot 03_duck
+frames 5
+# ... and with polling broken (the SDK wrapper reads scancode 0): key events alone must duck
+poll off
+holdshot 03b_duck_events_only
+hold DOWN 15
+poll on
 frames 60
 shot 04_later
 key EQUALS
@@ -24,6 +31,9 @@ shot 05_help
 key EQUALS
 frames 2
 shot 05b_help_closed
+# the OS reports KEY_HELD on every call while a key is down: must not make frames slower
+holdflood UP 60
+frames 3
 # touch controls: tap the JUMP button, hold DUCK
 key UP
 frames 5

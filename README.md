@@ -8,7 +8,7 @@ The Chrome "no internet" dinosaur game for the Casio fx-CP400 / ClassPad II, wri
 * Running T-Rex with run / jump / duck / dead animations, a blinking idle pose, variable jump height and **fast fall**
 * Small and large **cacti** in groups of 1-3 (bigger groups only appear at higher speeds), three flight heights of **pterodactyls** (jump the low one, duck the middle one, walk under the high one)
 * **Day and night**: every 700 points the world fades to night for a while, with a **moon that changes phase**, twinkling **stars**, drifting clouds and a scrolling ground texture
-* Score, **high score saved to a file** (`\\fls0\DinoHi.sav`, a 9-byte checksummed record; a corrupt or foreign file is ignored), score flashing every 100 points, game-over screen with the restart icon, pause
+* Score, **high score saved to a file** (`\\fls0\DinoHi.sav`, a 9-byte checksummed record; a corrupt or foreign file is ignored; if a save or load fails, the header shows `SAVE ERR` / `HI LOAD ERR` with the OS error code), score flashing every 100 points, game-over screen with the restart icon, pause
 * Speeds up as you go (4 to 9 pixels per tick); obstacle gaps scale with speed and are proven passable by an automated look-ahead player (see Tests)
 
 ## Controls
@@ -27,7 +27,7 @@ The Chrome "no internet" dinosaur game for the Casio fx-CP400 / ClassPad II, wri
 ## Game speed (important)
 
 The Hollyhock SDK has no timer, so the game cannot know how fast it really runs. Each frame is "update + draw + LCD refresh + a busy wait". The **SPEED 1-9** setting
-(`+` / `-`) changes the busy wait; pick what feels like Chrome's pace on your calculator. 
+(`+` / `-`) changes the busy wait. It starts at 9, the fastest (no busy wait); lower it if the game is too quick on your calculator.
 
 ## "LCD: FAST" (experimental)
 
@@ -69,3 +69,8 @@ make -C test SDK_DIR=... shots                        # runs the real UI headles
 | `save.h/.cpp` | high score file (record format is pure and unit-tested) |
 | `main.cpp` | input, touch buttons, panel, pacing, main loop |
 | `cp400.md` | field guide for writing CP400 games (SDK, hardware, performance, testing) |
+
+## Notes from testing on a real calculator
+
+* The SDK's `Input_GetKeyState()` is broken on this big-endian CPU (it passes a 4-byte enum where a 16-bit scancode is read, so it always asks about scancode 0). The game calls `Input_GetKeyStateU()` with a real `uint16_t`, and also tracks key press / held / release events as a fallback.
+* While a key is down the OS keeps reporting "held" events on every `GetInput` call, so draining the queue until empty made every frame slow while holding a key (jumping with UP). The game now stops at the first held event and never makes more than a few calls per frame; the host harness checks this (`holdflood` in `test/script.txt`).

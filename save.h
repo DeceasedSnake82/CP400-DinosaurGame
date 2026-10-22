@@ -29,7 +29,13 @@ inline bool decode(const uint8_t in[RECORD_SIZE], uint32_t& score) {
     return true;
 }
 
-bool load(uint32_t& score);                 // false: no (valid) file
-bool store(uint32_t score);                 // false: could not write it
+// Both return 0 on success, otherwise a negative code: the SDK's File_Error (e.g. -14 no such file,
+// -5 access denied, -13 disk full) or one of ours below. The app shows the code on screen.
+constexpr int ERR_BAD_RECORD = -1000;       // file exists but is not a Dino save
+constexpr int ERR_SHORT_IO   = -1001;       // fewer bytes read / written than expected
+constexpr int ERR_CLOSE      = -1002;       // the OS failed to close (flush) the file
+
+int load(uint32_t& score);
+int store(uint32_t score);
 
 }  // namespace save

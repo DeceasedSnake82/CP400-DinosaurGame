@@ -6,7 +6,12 @@
 // Script commands (one per line, '#' starts a comment). A "frame" is one pass of the
 // app's main loop (the harness counts a frame each time the app has drained its event queue).
 //   key NAME            press a key once (UP EXE DOT PLUS MINUS 4 5 EQUALS CLEAR DOWN)
-//   hold NAME N         hold UP / DOWN for N frames (key state + a press event)
+//   hold NAME N         hold UP / DOWN / EXE for N frames: a press event, then a KEY_HELD event every
+//                       frame while it is down (like the OS), then a release event, plus key-state polling
+//   holdflood NAME N    like hold, but the OS reports KEY_HELD on EVERY GetInput call, for N calls (worst case);
+//                       the run fails if the app ever makes more than 8 GetInput calls in one frame
+//   holdshot NAME       take a screenshot in the middle of the next `hold`
+//   poll on|off         switch Input_GetKeyState polling off to emulate the SDK's broken inline wrapper
 //   tap X Y             touch down + up
 //   down X Y            touch down only          up        release the touch
 //   frames N            let the app run N frames without input
@@ -31,6 +36,9 @@ static uint16_t g_vram[320 * 528];
 static uint16_t g_lcd[320 * 528];          // what the "panel" shows
 static long g_refreshes = 0, g_partial = 0;
 
+static int g_calls = 0, g_maxCalls = 0;                 // GetInput calls in the current main-loop pass / the maximum
+static void frameEnd() { if (g_calls > g_maxCalls) g_maxCalls = g_calls; g_calls = 0; }
+void host_frame_start() { frameEnd(); }
 static void host_refresh() { memcpy(g_lcd, g_vram, sizeof g_lcd); ++g_refreshes; }
 void host_present_rows(int y0, int y1) { memcpy(g_lcd + y0 * 320, g_vram + y0 * 320, (size_t)(y1 - y0 + 1) * 320 * 2); ++g_partial; }
 static uint16_t* host_vram() { return g_vram; }
@@ -56,6 +64,11 @@ static std::vector<Cmd> script;
 static size_t pc = 0;
 static int waitFrames = 0, holdFrames = 0;
 static uint16_t heldScan = 0;
+static int heldCode = 0;
+static std::string holdShotName;
+static bool flood = false;
+static long floodCallsLeft = 0;
+static bool holdEmitted = false, pendingRelease = false, pollOn = true;
 static struct { int dir, x, y; } pending[8];
 static int nPending = 0, iPending = 0;
 static bool quitSent = false;
@@ -75,8 +88,8 @@ static int scanCode(const std::string& k) {
     if (k == "EXE") return ScancodeEXE;
     fprintf(stderr, "unknown scancode %s\n", k.c_str()); exit(1);
 }
-static void setKey(Input_Event* e, int code) {
-    e->type = EVENT_KEY; e->data.key.direction = KEY_PRESSED; e->data.key.keyCode = (Input_Keycode)code;
+static void setKey(Input_Event* e, int code, int dir = KEY_PRESSED) {
+    e->type = EVENT_KEY; e->data.key.direction = (Input_KeyEventType)dir; e->data.key.keyCode = (Input_Keycode)code;
 }
 static void setTouch(Input_Event* e, int dir, int x, int y) {
     e->type = EVENT_TOUCH; e->data.touch_single.direction = (Input_TouchEventType)dir;
@@ -85,14 +98,30 @@ static void setTouch(Input_Event* e, int dir, int x, int y) {
 
 static int host_getinput(Input_Event* e, uint32_t, uint32_t) {
     e->type = EVENT_NONE;
+    ++g_calls;
+    if (flood) {
+        if (floodCallsLeft-- <= 0) { flood = false; heldScan = 0; pendingRelease = true; }
+        else { setKey(e, heldCode, KEY_HELD); return 0; }
+    }
     if (iPending < nPending) { setTouch(e, pending[iPending].dir, pending[iPending].x, pending[iPending].y); ++iPending; return 0; }
     nPending = iPending = 0;
     if (waitFrames > 0) { --waitFrames; ++timeFrames; return 0; }
-    if (holdFrames > 0) { if (--holdFrames == 0) heldScan = 0; ++timeFrames; return 0; }
+    if (holdFrames > 0) {
+        if (!holdEmitted) { holdEmitted = true; setKey(e, heldCode, KEY_HELD); return 0; }
+        holdEmitted = false;
+        if (holdFrames == 3 && !holdShotName.empty()) { shot(holdShotName.c_str()); holdShotName.clear(); }
+        ++timeFrames;
+        if (--holdFrames == 0) { heldScan = 0; pendingRelease = true; }
+        return 0;
+    }
+    if (pendingRelease) { pendingRelease = false; setKey(e, heldCode, KEY_RELEASED); return 0; }
     while (pc < script.size()) {
         const Cmd& c = script[pc++];
         if (c.op == "key") { setKey(e, keyCode(c.a)); return 0; }
-        if (c.op == "hold") { heldScan = (uint16_t)scanCode(c.a); holdFrames = c.n[0]; setKey(e, keyCode(c.a)); return 0; }
+        if (c.op == "hold") { heldScan = (uint16_t)scanCode(c.a); heldCode = keyCode(c.a); holdFrames = c.n[0]; holdEmitted = false; setKey(e, heldCode); return 0; }
+        if (c.op == "holdflood") { heldScan = (uint16_t)scanCode(c.a); heldCode = keyCode(c.a); flood = true; floodCallsLeft = c.n[0]; setKey(e, heldCode); return 0; }
+        if (c.op == "poll") { pollOn = c.a == "on"; continue; }
+        if (c.op == "holdshot") { holdShotName = c.a; continue; }
         if (c.op == "tap") { pending[0] = { TOUCH_DOWN, c.n[0], c.n[1] }; pending[1] = { TOUCH_UP, c.n[0], c.n[1] }; nPending = 2; iPending = 0; return host_getinput(e, 0, 0); }
         if (c.op == "down") { pending[0] = { TOUCH_DOWN, c.n[0], c.n[1] }; nPending = 1; iPending = 0; return host_getinput(e, 0, 0); }
         if (c.op == "up") { pending[0] = { TOUCH_UP, 0, 0 }; nPending = 1; iPending = 0; return host_getinput(e, 0, 0); }
@@ -109,7 +138,7 @@ static int host_getinput(Input_Event* e, uint32_t, uint32_t) {
     return 0;
 }
 
-static bool host_keystate(uint16_t* scancode) { return heldScan && *scancode == heldScan; }
+static bool host_keystate(uint16_t* scancode) { return pollOn && heldScan && *scancode == heldScan; }
 
 int (*GetInput)(struct Input_Event*, uint32_t, uint32_t) = host_getinput;
 bool (*Input_GetKeyStateU)(uint16_t*) __asm__("Input_GetKeyState") = host_keystate;
@@ -126,14 +155,15 @@ int main(int argc, char** argv) {
         if (line[0] == '#' || line[0] == '\n') continue;
         if (sscanf(line, "%31s", op) != 1) continue;
         Cmd c; c.op = op;
-        if (c.op == "key" || c.op == "shot" || c.op == "time") sscanf(line, "%*s %63s", a);
-        else if (c.op == "hold") sscanf(line, "%*s %63s %d", a, &n[0]);
+        if (c.op == "key" || c.op == "shot" || c.op == "time" || c.op == "poll" || c.op == "holdshot") sscanf(line, "%*s %63s", a);
+        else if (c.op == "hold" || c.op == "holdflood") sscanf(line, "%*s %63s %d", a, &n[0]);
         else sscanf(line, "%*s %d %d %d %d", &n[0], &n[1], &n[2], &n[3]);
         c.a = a; memcpy(c.n, n, sizeof n);
         script.push_back(c);
     }
     fclose(f);
     dino_main();
-    printf("done: %ld full refreshes, %ld partial\n", g_refreshes, g_partial);
+    printf("done: %ld full refreshes, %ld partial; most GetInput calls in one frame: %d\n", g_refreshes, g_partial, g_maxCalls);
+    if (g_maxCalls > 8) { printf("FAIL: the app drains too many events per frame (%d)\n", g_maxCalls); return 1; }
     return 0;
 }

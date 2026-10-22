@@ -241,9 +241,9 @@ static void testSave() {
     CHECK(!save::decode(zeros, out), "empty file accepted");
 
     remove("out/test_dino.sav");
-    CHECK(!save::load(out), "no file yet");
-    CHECK(save::store(4321) && save::load(out) && out == 4321, "file round trip");
-    CHECK(save::store(77) && save::load(out) && out == 77, "overwrite with a lower value");
+    CHECK(save::load(out) != 0, "no file yet");
+    CHECK(save::store(4321) == 0 && save::load(out) == 0 && out == 4321, "file round trip");
+    CHECK(save::store(77) == 0 && save::load(out) == 0 && out == 77, "overwrite with a lower value");
     remove("out/test_dino.sav");
 }
 
