@@ -1,19 +1,19 @@
-APP_NAME:=app_template
+APP_NAME:=Dino
 
-ifndef SDK_DIR
-$(error You need to define the SDK_DIR environment variable, and point it to the sdk/ folder)
-endif
+SDK_DIR?=/sdk
 
 AS:=sh4a_nofpueb-elf-gcc
 AS_FLAGS:=
 
+# -O2 + LTO + gc-sections, like the other CP400 projects. The CPU has no FPU: the game uses
+# integer / fixed-point maths only (check with `make fpucheck` if you change it).
 FUNCTION_FLAGS=-flto -ffat-lto-objects -ffunction-sections -fdata-sections -O2 -gdwarf-5
 
 CC:=sh4a_nofpueb-elf-gcc
 CC_FLAGS:=$(FUNCTION_FLAGS) -Wall -Wextra -I $(SDK_DIR)/include/
 
 CXX:=sh4a_nofpueb-elf-g++
-CXX_FLAGS:=$(FUNCTION_FLAGS) -Wall -Wextra -I $(SDK_DIR)/include/
+CXX_FLAGS:=$(FUNCTION_FLAGS) -std=gnu++17 -Wall -Wextra -fno-exceptions -fno-rtti -I $(SDK_DIR)/include/
 
 LD:=sh4a_nofpueb-elf-g++
 LD_FLAGS:=$(FUNCTION_FLAGS) -Wl,--gc-sections -L$(SDK_DIR)
@@ -45,6 +45,11 @@ $(APP_ELF): $(OBJECTS) $(SDK_DIR)/libsdk.a
 $(APP_OUT): $(APP_ELF)
 	$(STRIP) -o $@ $^
 
+# Fails if the game pulled in soft-float helpers (slow on a CPU without an FPU).
+fpucheck: $(APP_ELF)
+	@if $(READELF) -s $(APP_ELF) | grep -E ' __(add|sub|mul|div)df3| __(add|sub|mul|div)sf3| __float| __fix'; then \
+		echo "soft-float code found in the app: use integer maths"; exit 1; else echo "no soft-float helpers linked"; fi
+
 # We're not actually building libsdk.a, just telling the user they need to do it
 # themselves. Just using the target to trigger an error when the file is
 # required but does not exist.
@@ -57,7 +62,8 @@ $(SDK_DIR)/libsdk.a:
 %.o: %.c
 	$(CC) -c $< -o $@ $(CC_FLAGS)
 
-%.o: %.cpp
+# Rebuild when headers change
+%.o: %.cpp $(wildcard *.h)
 	$(CXX) -c $< -o $@ $(CXX_FLAGS)
 
-.PHONY: elf hh3 all clean
+.PHONY: elf hh3 all clean fpucheck

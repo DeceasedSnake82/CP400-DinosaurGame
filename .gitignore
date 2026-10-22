@@ -1,0 +1,9 @@
+*.o
+*.elf
+*.map
+test/out/
+tools/art_preview.png
+dist/
+obj/
+.cache/
+.deps/

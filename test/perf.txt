@@ -1,0 +1,8 @@
+frames 5
+key UP
+frames 20
+frames 600
+time run_600_frames
+key 5
+frames 600
+time run_fast_lcd

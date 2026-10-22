@@ -1,0 +1,44 @@
+name: Build and test
+
+on:
+  push:
+    branches: [ "main", "claude/**" ]
+    tags: [ 'v*.*.*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Rules, renderer and a look-ahead bot that plays 380k ticks (PC only, SDK headers only).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: classpaddev/hollyhock-3
+          path: hollyhock-3
+      - run: make -C test test SDK_DIR=$GITHUB_WORKSPACE/hollyhock-3/sdk
+      - run: make -C test shots SDK_DIR=$GITHUB_WORKSPACE/hollyhock-3/sdk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: test/out/*.png
+
+  # The calculator build: Dino.hh3
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/classpaddev/hollyhock-3:v2.2.2
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.github_token }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: make -j && make fpucheck
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dino.hh3
+          path: Dino.hh3
