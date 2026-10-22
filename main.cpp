@@ -22,6 +22,7 @@
 #include "game.h"
 #include "gfx.h"
 #include "render.h"
+#include "save.h"
 
 APP_NAME("Dino")
 APP_DESCRIPTION("The Chrome offline dinosaur game: cacti, pterodactyls, day and night")
@@ -301,6 +302,8 @@ void pollEvents(bool wait) {
 int main() {
     gfx::init();
     dino::init(game, 0x1BADB002u);
+    uint32_t saved;
+    if (save::load(saved)) game.hiScore = saved;
 
     setMsg("PRESS UP OR TAP TO START");
     drawHeader();
@@ -325,7 +328,8 @@ int main() {
             dino::step(game, in);
             if (before != dino::PH_RUNNING && game.phase == dino::PH_RUNNING) { msg[0] = 0; headerDirty = true; }
             if (before == dino::PH_RUNNING && game.phase == dino::PH_DEAD) {
-                setMsg(game.newHigh ? "NEW HIGH SCORE!" : "TAP OR PRESS UP TO RETRY");
+                if (game.newHigh) setMsg(save::store(game.hiScore) ? "NEW HIGH SCORE!" : "NEW HIGH (NOT SAVED)");
+                else setMsg("TAP OR PRESS UP TO RETRY");
                 game.newHigh = false;
             }
         }

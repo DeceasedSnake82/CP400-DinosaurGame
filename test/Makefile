@@ -11,7 +11,7 @@ OUT     := out
 STD     := -std=gnu++17
 
 GAME_SRC := ../game.cpp ../shapes.cpp
-APP_SRC  := host_app.cpp ../main.cpp ../gfx.cpp ../render.cpp $(GAME_SRC)
+APP_SRC  := host_app.cpp ../main.cpp ../gfx.cpp ../render.cpp ../save.cpp $(GAME_SRC)
 APP_FLAGS := -O2 -Wall -Wextra $(STD) -DDINO_HOST -Dmain=dino_main -I$(SDK_DIR)/include -I..
 
 .PHONY: test game render shots perf clean
@@ -24,8 +24,8 @@ game: $(OUT)/t_game
 render: $(OUT)/t_render
 	$(OUT)/t_render
 
-$(OUT)/t_game: test_game.cpp $(GAME_SRC) $(wildcard ../*.h) | $(OUT)
-	$(CXX) -O2 -Wall -Wextra $(STD) -I.. -o $@ test_game.cpp $(GAME_SRC)
+$(OUT)/t_game: test_game.cpp $(GAME_SRC) ../save.cpp $(wildcard ../*.h) | $(OUT)
+	$(CXX) -O2 -Wall -Wextra $(STD) -DDINO_HOST -DDINO_SAVE_PATH='"out/test_dino.sav"' -I.. -o $@ test_game.cpp $(GAME_SRC) ../save.cpp
 
 $(OUT)/t_render: test_render.cpp ../render.cpp ../gfx.cpp $(GAME_SRC) $(wildcard ../*.h) | $(OUT)
 	$(CXX) -O2 -Wall -Wextra $(STD) -DDINO_HOST -I$(SDK_DIR)/include -I.. -o $@ test_render.cpp ../render.cpp ../gfx.cpp $(GAME_SRC)
@@ -34,6 +34,7 @@ $(OUT)/app: $(APP_SRC) $(wildcard ../*.h) | $(OUT)
 	$(CXX) $(APP_FLAGS) -o $@ $(APP_SRC)
 
 shots: $(OUT)/app
+	rm -f $(OUT)/dino.sav
 	$(OUT)/app script.txt
 	python3 ppm2png.py $(OUT)
 

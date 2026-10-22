@@ -7,6 +7,7 @@
 #include <time.h>
 #include "../game.h"
 #include "bot.h"
+#include "../save.h"
 
 using namespace dino;
 
@@ -219,6 +220,33 @@ static void testShapes() {
     CHECK(shapes::overlap(a, 0, 0, a, 10, 5, 2) == shapes::overlap(a, 10, 5, a, 0, 0, 2), "symmetry");
 }
 
+static void testSave() {
+    uint8_t rec[save::RECORD_SIZE];
+    uint32_t out = 0;
+    const uint32_t vals[] = {0u, 1u, 26u, 700u, 12345u, 99999u};
+    for (uint32_t v : vals) {
+        save::encode(v, rec);
+        CHECK(save::decode(rec, out) && out == v, "save record round trip %u", v);
+    }
+    save::encode(1234, rec);
+    for (int i = 0; i < save::RECORD_SIZE; ++i) {            // any single corrupted byte is rejected
+        uint8_t bad[save::RECORD_SIZE];
+        memcpy(bad, rec, sizeof bad);
+        bad[i] ^= 0x10;
+        CHECK(!save::decode(bad, out), "corrupted byte %d accepted", i);
+    }
+    save::encode(100000, rec);                              // out of range for the 5 digit score
+    CHECK(!save::decode(rec, out), "score above 99999 accepted");
+    uint8_t zeros[save::RECORD_SIZE] = {0};
+    CHECK(!save::decode(zeros, out), "empty file accepted");
+
+    remove("out/test_dino.sav");
+    CHECK(!save::load(out), "no file yet");
+    CHECK(save::store(4321) && save::load(out) && out == 4321, "file round trip");
+    CHECK(save::store(77) && save::load(out) && out == 77, "overwrite with a lower value");
+    remove("out/test_dino.sav");
+}
+
 static void testPerf() {
     Game g = fresh(5);
     Input j = {true, true, false};
@@ -244,6 +272,7 @@ int main() {
     testSpawning();
     testDeterminism();
     testDayNight();
+    testSave();
     testFairness();
     testPerf();
     if (failures) { printf("%d FAILURE(S)\n", failures); return 1; }

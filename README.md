@@ -8,7 +8,7 @@ The Chrome "no internet" dinosaur game for the Casio fx-CP400 / ClassPad II, wri
 * Running T-Rex with run / jump / duck / dead animations, a blinking idle pose, variable jump height and **fast fall**
 * Small and large **cacti** in groups of 1-3 (bigger groups only appear at higher speeds), three flight heights of **pterodactyls** (jump the low one, duck the middle one, walk under the high one)
 * **Day and night**: every 700 points the world fades to night for a while, with a **moon that changes phase**, twinkling **stars**, drifting clouds and a scrolling ground texture
-* Score, high score (this session), score flashing every 100 points, game-over screen with the restart icon, pause
+* Score, **high score saved to a file** (`\\fls0\DinoHi.sav`, a 9-byte checksummed record; a corrupt or foreign file is ignored), score flashing every 100 points, game-over screen with the restart icon, pause
 * Speeds up as you go (4 to 9 pixels per tick); obstacle gaps scale with speed and are proven passable by an automated look-ahead player (see Tests)
 
 ## Controls
@@ -54,7 +54,7 @@ make -C test SDK_DIR=... shots                        # runs the real UI headles
 ```
 
 * `test/test_game.cpp`: jump physics, collision rules (every pterodactyl height), spawn invariants (gaps, no triple repeats, pteras only when fast enough),
-  determinism, the day/night schedule, and a **look-ahead bot** (`test/bot.h`) that plays 380,000 ticks over 16 seeds using only the human controls and must never crash.
+  determinism, the day/night schedule, the save-file format (round trip, corruption rejected), and a **look-ahead bot** (`test/bot.h`) that plays 380,000 ticks over 16 seeds using only the human controls and must never crash.
 * `test/test_render.cpp`: nothing is drawn outside the playfield, rendering is deterministic, screenshots of day / night / fade / groups / pterodactyl / game over.
 * `test/host_app.cpp` runs `main.cpp` unchanged against a fake LCD and scripted input (`test/script.txt`).
 
@@ -66,5 +66,6 @@ make -C test SDK_DIR=... shots                        # runs the real UI headles
 | `render.h/.cpp` | game state to pixels |
 | `shapes.h/.cpp`, `art.h` | ASCII-art sprites to run-length rows + collision extents |
 | `gfx.h/.cpp` | framebuffer helpers and the 5x7 font |
+| `save.h/.cpp` | high score file (record format is pure and unit-tested) |
 | `main.cpp` | input, touch buttons, panel, pacing, main loop |
 | `cp400.md` | field guide for writing CP400 games (SDK, hardware, performance, testing) |
