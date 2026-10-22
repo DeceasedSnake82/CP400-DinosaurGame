@@ -81,10 +81,16 @@ char msg[40];
 
 bool evJump;                                 // jump pressed since the last tick (key or touch)
 bool touchJump, touchDuck;                   // finger is down on the field/JUMP, on DUCK
-// "Key is down" according to key events (press / held / release), in frames. This backs up
-// Input_GetKeyState polling: the held event repeats while the key stays down.
-constexpr int KEY_EVT_FRAMES = 4;
+// "Key is down", in frames left. Set when a sample frame sees the key down (key-state polling, or
+// a press / held event); cleared by a release event or by a sample frame that does not see it.
+// While something is held the input system is only read every HELD_SAMPLE_EVERY frames, because
+// reading it with a key or finger down made every frame slow on the calculator (lag while
+// holding UP during a jump); HOLD_FRAMES keeps the state alive between samples.
+constexpr int HELD_SAMPLE_EVERY = 4;
+constexpr int HOLD_FRAMES = HELD_SAMPLE_EVERY + 2;
 int jumpEvt, duckEvt;
+bool jumpSeen, duckSeen;                     // seen down during the current sample
+uint32_t frameNo;
 
 void setMsg(const char* s) { gfx::putStr(msg, s); headerDirty = true; }
 
@@ -293,19 +299,22 @@ void onKey(int code) {
     }
 }
 
-// Any key event: keeps the event-based "is it down" state, then handles fresh presses.
+// Any key event: remembers whether the jump / duck keys are down, then handles fresh presses.
 void onKeyEvent(int dir, int code) {
-    int* hold = nullptr;
-    if (code == KEYCODE_UP || code == KEYCODE_EXE) hold = &jumpEvt;
-    else if (code == KEYCODE_DOWN) hold = &duckEvt;
-    if (hold) *hold = dir == KEY_RELEASED ? 0 : KEY_EVT_FRAMES;
+    const bool down = dir != KEY_RELEASED;
+    if (code == KEYCODE_UP || code == KEYCODE_EXE) jumpSeen = down;
+    else if (code == KEYCODE_DOWN) duckSeen = down;
+    if (!down) {
+        if (code == KEYCODE_UP || code == KEYCODE_EXE) jumpEvt = 0;
+        else if (code == KEYCODE_DOWN) duckEvt = 0;
+    }
     if (dir == KEY_PRESSED) onKey(code);
 }
 
 // Drains the event queue. When `wait` is set the first call blocks (nothing is animating).
-// The OS keeps reporting KEY_HELD for as long as a key is down, so the drain stops at the first
-// one (and after a handful of calls): looping until "empty" made every frame slow while a key was held.
-constexpr int MAX_EVENTS_PER_FRAME = 8;
+// The OS keeps reporting KEY_HELD / TOUCH_HOLD_DRAG for as long as a key / finger is down, so the
+// drain stops at the first one (and after a few calls): looping until "empty" made every frame slow.
+constexpr int MAX_EVENTS_PER_FRAME = 4;
 void pollEvents(bool wait) {
     for (int n = 0; n < MAX_EVENTS_PER_FRAME; ++n) {
         struct Input_Event ev;
@@ -317,6 +326,7 @@ void pollEvents(bool wait) {
             if (ev.data.key.direction == KEY_HELD) break;
         } else if (ev.type == EVENT_TOUCH) {
             onTouch(ev.data.touch_single.direction, ev.data.touch_single.p1_x, ev.data.touch_single.p1_y);
+            if (ev.data.touch_single.direction == TOUCH_HOLD_DRAG) break;
         } else {
             break;
         }
@@ -348,14 +358,22 @@ int main() {
         host_frame_start();
 #endif
         const bool idleBlock = paused || helpOpen;
-        pollEvents(idleBlock);
-        if (quit) break;
+        ++frameNo;
+        const bool held = jumpEvt > 0 || duckEvt > 0 || touchJump || touchDuck;
+        if (idleBlock || !held || frameNo % HELD_SAMPLE_EVERY == 0) {       // sample the input system
+            jumpSeen = duckSeen = false;
+            pollEvents(idleBlock);
+            if (quit) break;
+            jumpSeen = jumpSeen || keyDown(ScancodeUp) || keyDown(ScancodeEXE);
+            duckSeen = duckSeen || keyDown(ScancodeDown);
+            jumpEvt = jumpSeen ? HOLD_FRAMES : 0;
+            duckEvt = duckSeen ? HOLD_FRAMES : 0;
+        }
 
-        const bool keyUp = keyDown(ScancodeUp) || keyDown(ScancodeEXE);
         dino::Input in;
         in.jumpPress = evJump;
-        in.jumpHeld  = keyUp || jumpEvt > 0 || touchJump;
-        in.duckHeld  = keyDown(ScancodeDown) || duckEvt > 0 || touchDuck;
+        in.jumpHeld  = jumpEvt > 0 || touchJump;
+        in.duckHeld  = duckEvt > 0 || touchDuck;
         evJump = false;
         if (jumpEvt > 0) --jumpEvt;
         if (duckEvt > 0) --duckEvt;

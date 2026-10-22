@@ -37,11 +37,30 @@ int store(uint32_t score) {
 namespace save {
 
 namespace {
-const char* const PATH = "\\\\fls0\\DinoHi.sav";          // = \\fls0\DinoHi.sav
+// The Hollyhock launcher's own file loader opens "\\fls0\\run.bin" in assembler, which is a SINGLE leading
+// backslash; the SDK doc comment suggests a double one. A wrong guess gives FILE_ENOVOLUME (-7), so
+// try the single one first and fall back to the double one.
+const char* const PATHS[] = { "\\fls0\\DinoHi.sav", "\\\\fls0\\DinoHi.sav" };
+constexpr int NUM_PATHS = (int)(sizeof PATHS / sizeof PATHS[0]);
+
+// Open with the first (path, mode) combination that works. Returns an fd >= 0, or the first error.
+int openAny(const int* modes, int numModes) {
+    int firstErr = 0;
+    for (int p = 0; p < NUM_PATHS; ++p) {
+        for (int m = 0; m < numModes; ++m) {
+            const int fd = File_Open(PATHS[p], modes[m]);
+            if (fd >= 0) return fd;
+            if (!firstErr) firstErr = fd;
+            if (fd == FILE_ENOVOLUME || fd == FILE_ENOPATH) break;     // another mode will not help: next path
+        }
+    }
+    return firstErr;
 }
+}  // namespace
 
 int load(uint32_t& score) {
-    const int fd = File_Open(PATH, FILE_OPEN_READ);
+    static const int MODES[] = { FILE_OPEN_READ };
+    const int fd = openAny(MODES, 1);
     if (fd < 0) return fd;
     uint8_t rec[RECORD_SIZE];
     const int n = File_Read(fd, rec, RECORD_SIZE);
@@ -63,13 +82,8 @@ int store(uint32_t score) {
         FILE_OPEN_READ | FILE_OPEN_WRITE,
         FILE_OPEN_READ | FILE_OPEN_WRITE | FILE_OPEN_CREATE,
     };
-    int fd = -1, firstErr = 0;
-    for (int mode : MODES) {
-        fd = File_Open(PATH, mode);
-        if (fd >= 0) break;
-        if (!firstErr) firstErr = fd;
-    }
-    if (fd < 0) return firstErr ? firstErr : fd;
+    const int fd = openAny(MODES, (int)(sizeof MODES / sizeof MODES[0]));
+    if (fd < 0) return fd;
     const int n = File_Write(fd, rec, RECORD_SIZE);
     if (n == RECORD_SIZE) File_Flush(fd);
     const int c = File_Close(fd);

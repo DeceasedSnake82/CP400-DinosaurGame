@@ -36,9 +36,11 @@ static uint16_t g_vram[320 * 528];
 static uint16_t g_lcd[320 * 528];          // what the "panel" shows
 static long g_refreshes = 0, g_partial = 0;
 
+static bool flood = false;                              // worst-case mode: KEY_HELD on every GetInput call
+static long floodCalls = 0, floodFrames = 0;            // GetInput calls / main-loop passes while a key is held
 static int g_calls = 0, g_maxCalls = 0;                 // GetInput calls in the current main-loop pass / the maximum
 static void frameEnd() { if (g_calls > g_maxCalls) g_maxCalls = g_calls; g_calls = 0; }
-void host_frame_start() { frameEnd(); }
+void host_frame_start() { frameEnd(); if (flood) ++floodFrames; }
 static void host_refresh() { memcpy(g_lcd, g_vram, sizeof g_lcd); ++g_refreshes; }
 void host_present_rows(int y0, int y1) { memcpy(g_lcd + y0 * 320, g_vram + y0 * 320, (size_t)(y1 - y0 + 1) * 320 * 2); ++g_partial; }
 static uint16_t* host_vram() { return g_vram; }
@@ -66,7 +68,7 @@ static int waitFrames = 0, holdFrames = 0;
 static uint16_t heldScan = 0;
 static int heldCode = 0;
 static std::string holdShotName;
-static bool flood = false;
+
 static long floodCallsLeft = 0;
 static bool holdEmitted = false, pendingRelease = false, pollOn = true;
 static struct { int dir, x, y; } pending[8];
@@ -101,7 +103,7 @@ static int host_getinput(Input_Event* e, uint32_t, uint32_t) {
     ++g_calls;
     if (flood) {
         if (floodCallsLeft-- <= 0) { flood = false; heldScan = 0; pendingRelease = true; }
-        else { setKey(e, heldCode, KEY_HELD); return 0; }
+        else { ++floodCalls; setKey(e, heldCode, KEY_HELD); return 0; }
     }
     if (iPending < nPending) { setTouch(e, pending[iPending].dir, pending[iPending].x, pending[iPending].y); ++iPending; return 0; }
     nPending = iPending = 0;
@@ -164,6 +166,8 @@ int main(int argc, char** argv) {
     fclose(f);
     dino_main();
     printf("done: %ld full refreshes, %ld partial; most GetInput calls in one frame: %d\n", g_refreshes, g_partial, g_maxCalls);
+    printf("while a key is held: %ld GetInput calls over %ld frames\n", floodCalls, floodFrames);
+    if (floodFrames > 0 && floodCalls * 2 > floodFrames) { printf("FAIL: input is read on more than every other frame while a key is held\n"); return 1; }
     if (g_maxCalls > 8) { printf("FAIL: the app drains too many events per frame (%d)\n", g_maxCalls); return 1; }
     return 0;
 }

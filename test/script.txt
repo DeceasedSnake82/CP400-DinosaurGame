@@ -13,15 +13,14 @@ frames 2
 key UP
 frames 20
 shot 02_jumping
-frames 40
+frames 10
 # ducking with key-state polling working ...
 holdshot 03_duck
-hold DOWN 15
-frames 5
+hold DOWN 5
 # ... and with polling broken (the SDK wrapper reads scancode 0): key events alone must duck
 poll off
 holdshot 03b_duck_events_only
-hold DOWN 15
+hold DOWN 5
 poll on
 frames 60
 shot 04_later
