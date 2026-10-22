@@ -55,6 +55,16 @@ jobs:
           if git diff --cached --quiet; then
             echo "Dino.hh3 is unchanged"
           else
-            git commit -m "Build Dino.hh3 from ${GITHUB_SHA::7} [skip ci]"
+            git commit -m "Build Dino.hh3 from $(echo "$GITHUB_SHA" | cut -c1-7) [skip ci]"
             git push
           fi
+      # Manual runs (Actions tab -> Run workflow) also print the file as base64 in the log,
+      # for when the artifact download is not reachable:  base64 -d  turns it back into Dino.hh3
+      - name: Print Dino.hh3 (base64) for manual runs
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          sha256sum Dino.hh3
+          wc -c Dino.hh3
+          echo "-----BEGIN DINO.HH3 BASE64-----"
+          base64 -w 76 Dino.hh3
+          echo "-----END DINO.HH3 BASE64-----"
