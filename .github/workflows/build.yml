@@ -27,9 +27,12 @@ jobs:
           name: screenshots
           path: test/out/*.png
 
-  # The calculator build: Dino.hh3
+  # The calculator build: Dino.hh3. On a push to main the result is also committed back to
+  # the repo (like Chess.hh3 / GameOfLife.hh3), so "download Dino.hh3" always works from main.
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     container:
       image: ghcr.io/classpaddev/hollyhock-3:v2.2.2
       credentials:
@@ -42,3 +45,16 @@ jobs:
         with:
           name: Dino.hh3
           path: Dino.hh3
+      - name: Commit Dino.hh3 to main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f Dino.hh3
+          if git diff --cached --quiet; then
+            echo "Dino.hh3 is unchanged"
+          else
+            git commit -m "Build Dino.hh3 from ${GITHUB_SHA::7} [skip ci]"
+            git push
+          fi
