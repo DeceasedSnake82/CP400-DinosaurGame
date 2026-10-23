@@ -10,6 +10,7 @@
 //                       frame while it is down (like the OS), then a release event, plus key-state polling
 //   holdflood NAME N    like hold, but the OS reports KEY_HELD on EVERY GetInput call, for N calls (worst case);
 //                       the run fails if the app ever makes more than 8 GetInput calls in one frame
+//   (every `shot` also checks that the fake LCD panel equals VRAM: nothing drawn may be left unpushed)
 //   holdshot NAME       take a screenshot in the middle of the next `hold`
 //   poll on|off         switch Input_GetKeyState polling off to emulate the SDK's broken inline wrapper
 //   tap X Y             touch down + up
@@ -45,7 +46,13 @@ static void host_refresh() { memcpy(g_lcd, g_vram, sizeof g_lcd); ++g_refreshes;
 void host_present_rows(int y0, int y1) { memcpy(g_lcd + y0 * 320, g_vram + y0 * 320, (size_t)(y1 - y0 + 1) * 320 * 2); ++g_partial; }
 static uint16_t* host_vram() { return g_vram; }
 
+static int g_lcdMismatch = 0;
 static void shot(const char* name) {
+    {   // everything the app drew must have been pushed to the panel
+        int bad = 0, firstRow = -1;
+        for (int i = 0; i < 320 * 528; ++i) if (g_lcd[i] != g_vram[i]) { if (!bad) firstRow = i / 320; ++bad; }
+        if (bad) { printf("FAIL: %s: LCD differs from VRAM in %d pixels (first at row %d): something was drawn but not pushed\n", name, bad, firstRow); ++g_lcdMismatch; }
+    }
     char path[256];
     snprintf(path, sizeof path, "out/%s.ppm", name);
     FILE* f = fopen(path, "wb");
@@ -79,7 +86,7 @@ static double timeStart = 0; static int timeFrames = 0; static long timeRefresh 
 static int keyCode(const std::string& k) {
     static const struct { const char* n; int c; } T[] = {
         {"UP", KEYCODE_UP}, {"DOWN", KEYCODE_DOWN}, {"EXE", KEYCODE_EXE}, {"DOT", KEYCODE_DOT},
-        {"PLUS", KEYCODE_PLUS}, {"MINUS", KEYCODE_MINUS}, {"4", KEYCODE_4}, {"5", KEYCODE_5},
+        {"PLUS", KEYCODE_PLUS}, {"MINUS", KEYCODE_MINUS}, {"4", KEYCODE_4}, {"5", KEYCODE_5}, {"6", KEYCODE_6},
         {"EQUALS", KEYCODE_EQUALS}, {"CLEAR", KEYCODE_POWER_CLEAR} };
     for (auto& t : T) if (k == t.n) return t.c;
     fprintf(stderr, "unknown key %s\n", k.c_str()); exit(1);
@@ -167,7 +174,7 @@ int main(int argc, char** argv) {
     dino_main();
     printf("done: %ld full refreshes, %ld partial; most GetInput calls in one frame: %d\n", g_refreshes, g_partial, g_maxCalls);
     printf("while a key is held: %ld GetInput calls over %ld frames\n", floodCalls, floodFrames);
-    if (floodFrames > 0 && floodCalls * 2 > floodFrames) { printf("FAIL: input is read on more than every other frame while a key is held\n"); return 1; }
+    if (g_lcdMismatch) return 1;
     if (g_maxCalls > 8) { printf("FAIL: the app drains too many events per frame (%d)\n", g_maxCalls); return 1; }
     return 0;
 }

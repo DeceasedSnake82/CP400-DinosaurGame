@@ -1,14 +1,6 @@
 # Walk through the UI; screenshots land in out/
 frames 2
 shot 01_title
-# fast LCD: only the field rows are pushed; what the panel shows must still be complete and current
-key 5
-frames 1
-shot 01b_fast_msg
-frames 30
-shot 01c_fast_title
-key 5
-frames 2
 # first jump starts the run
 key UP
 frames 20
@@ -44,7 +36,7 @@ frames 2
 shot 07_paused
 key DOT
 frames 1
-# night mode, speed, LCD mode keys
+# night mode, speed keys
 key 4
 shot 08_night_msg
 frames 100
@@ -54,3 +46,10 @@ key MINUS
 key MINUS
 frames 1
 shot 10_speed
+# input debug overlay on and off (the header is redrawn every frame while it is on)
+key 6
+frames 5
+shot 13_debug_overlay
+key 6
+frames 2
+shot 14_debug_off

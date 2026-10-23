@@ -20,19 +20,18 @@ The Chrome "no internet" dinosaur game for the Casio fx-CP400 / ClassPad II, wri
 | Pause | `.` | PAUSE |
 | Game speed | `+` / `-` | FASTER / SLOWER |
 | Day / night mode (auto, always day, always night) | `4` | NIGHT |
-| LCD mode, safe / fast (experimental, see below) | `5` | LCD |
+| Input debug overlay (shows what the OS reports for the jump key) | `6` | |
 | Help | `=` | HELP |
-| Quit | `CLEAR` | |
+| Quit | `CLEAR` | QUIT |
 
 ## Game speed (important)
 
-The Hollyhock SDK has no timer, so the game cannot know how fast it really runs. Each frame is "update + draw + LCD refresh + a busy wait". The **SPEED 1-9** setting
+The Hollyhock SDK has no timer, so the game cannot know how fast it really runs. Each frame is "update + draw + LCD update + a busy wait". The **SPEED 1-9** setting
 (`+` / `-`) changes the busy wait. It starts at 9, the fastest (no busy wait); lower it if the game is too quick on your calculator.
 
-## "LCD: FAST" (experimental)
+## LCD updates
 
-`LCD_Refresh()` always pushes the whole 320x528 screen. In FAST mode only the playfield rows are sent through the LCD controller window
-(`LCD_SetDrawingBounds` + `lcd_data_port`), about 40% of the data. The SDK does not document those calls in detail, so this is **off by default**: if the screen looks wrong, press `5` again.
+`LCD_Refresh()` always pushes the whole 320x528 screen, which is slow, so the game uses it once at start-up and afterwards only writes the screen rows that changed (the playfield every frame, the header and button panel only when they change) through the LCD controller window (`LCD_SetDrawingBounds` + `lcd_data_port`). The host tests check after every screenshot that the fake panel equals VRAM, so a missed push is caught.
 
 ## Building
 
@@ -73,5 +72,5 @@ make -C test SDK_DIR=... shots                        # runs the real UI headles
 ## Notes from testing on a real calculator
 
 * The SDK's `Input_GetKeyState()` is broken on this big-endian CPU (it passes a 4-byte enum where a 16-bit scancode is read, so it always asks about scancode 0). The game calls `Input_GetKeyStateU()` with a real `uint16_t`, and also tracks key press / held / release events as a fallback.
-* While a key is down the OS keeps reporting "held" events on every `GetInput` call, so draining the queue until empty made every frame slow while holding a key (jumping with UP). That was not enough: reading input at all while a key or finger is down is slow, so while something is held the game now reads the input system only every 4th frame (a fresh press or release is still noticed within a few frames). The host harness checks both limits (`holdflood` in `test/script.txt`).
+* While a key is down the OS keeps reporting "held" events on every `GetInput` call, so draining the queue until empty made every frame slow while holding a key (jumping with UP). Reading input less often (tried every 4th frame) did not remove the lag, so that was undone: the lag is not the number of input calls. The jump hold now survives a frame or two of missing key reports, and key `6` shows what the OS reports (`P` key-state poll, `H` hold frames, `DN`/`HLD`/`REL` press/held/release event counts).
 * Save file path: the SDK doc comment suggests `\\\\fls0\\`, but the launcher itself uses a single leading backslash (`\\fls0\\`); the double one gives `FILE_ENOVOLUME` (-7). The game tries the single one first.

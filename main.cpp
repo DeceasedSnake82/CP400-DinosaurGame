@@ -10,7 +10,10 @@
 //    UP / EXE / tap the field / JUMP button   jump (hold = higher)
 //    DOWN / DUCK button                       duck, or fall fast in the air
 //    .  pause     + / -  game speed     4  day / night mode
-//    5  LCD mode (safe / fast)          =  help          CLEAR  quit
+//    6  input debug overlay             =  help          CLEAR  quit
+//
+//  The LCD is updated with partial window writes only (header / playfield / panel rows that
+//  changed); LCD_Refresh() is used once at start-up.
 // ============================================================================
 
 #include <appdef.h>
@@ -61,7 +64,7 @@ constexpr uint16_t COL_DIM   = rgb(150, 156, 176);
 constexpr uint16_t COL_MSG   = rgb(250, 214, 90);
 constexpr uint16_t COL_HELP  = rgb(10, 12, 20);
 
-enum Button { B_PAUSE, B_NIGHT, B_LCD, B_SLOWER, B_FASTER, B_HELP, B_COUNT };
+enum Button { B_PAUSE, B_NIGHT, B_QUIT, B_SLOWER, B_FASTER, B_HELP, B_COUNT };
 
 // ---------------------------------------------------------------------------
 // Pace. The SDK has no timer, so the speed of the game is set by how long each frame
@@ -74,23 +77,25 @@ constexpr uint32_t SPIN_PER_LEVEL = 14000;
 // State
 // ---------------------------------------------------------------------------
 dino::Game game;
-bool quit, paused, helpOpen, fastLcd;
-bool panelDirty = true, headerDirty = true, fieldDirty = true, fullRefresh = true;
+bool quit, paused, helpOpen;
+bool panelDirty = true, headerDirty = true, fieldDirty = true;
+bool firstPresent = true;                    // the very first frame uses LCD_Refresh (whole screen)
 int  pace = DEFAULT_PACE;
 char msg[40];
 
 bool evJump;                                 // jump pressed since the last tick (key or touch)
 bool touchJump, touchDuck;                   // finger is down on the field/JUMP, on DUCK
-// "Key is down", in frames left. Set when a sample frame sees the key down (key-state polling, or
-// a press / held event); cleared by a release event or by a sample frame that does not see it.
-// While something is held the input system is only read every HELD_SAMPLE_EVERY frames, because
-// reading it with a key or finger down made every frame slow on the calculator (lag while
-// holding UP during a jump); HOLD_FRAMES keeps the state alive between samples.
-constexpr int HELD_SAMPLE_EVERY = 4;
-constexpr int HOLD_FRAMES = HELD_SAMPLE_EVERY + 2;
+// "Key is down", in frames left. Refreshed whenever the key-state poll or a press / held event
+// sees the key down; a release event ends it at once (unless the poll still sees the key), and
+// otherwise it runs out after HOLD_FRAMES, which bridges a frame or two where the OS reports nothing
+// (a hold that drops out makes the jump short).
+constexpr int HOLD_FRAMES = 3;
 int jumpEvt, duckEvt;
-bool jumpSeen, duckSeen;                     // seen down during the current sample
-uint32_t frameNo;
+bool jumpSeenEv, jumpRelEv, duckSeenEv, duckRelEv;   // what this frame's events said about the keys
+// Input debug overlay (key 6): what the OS reports for the jump key.
+bool debugInput;
+bool dbgPollUp;
+int  dbgHeldEvents, dbgReleaseEvents, dbgPressEvents;
 
 void setMsg(const char* s) { gfx::putStr(msg, s); headerDirty = true; }
 
@@ -117,10 +122,10 @@ void actNight() {
     setMsg(b);
 }
 
-void actLcd() {
-    fastLcd = !fastLcd;
-    fullRefresh = fieldDirty = panelDirty = true;
-    setMsg(fastLcd ? "LCD: FAST (EXPERIMENTAL)" : "LCD: SAFE");
+void actDebug() {
+    debugInput = !debugInput;
+    dbgHeldEvents = dbgReleaseEvents = dbgPressEvents = 0;
+    headerDirty = true;
 }
 
 void actPace(int d) {
@@ -139,7 +144,7 @@ void runAction(int id) {
     switch (id) {
         case B_PAUSE:  actPause();  break;
         case B_NIGHT:  actNight();  break;
-        case B_LCD:    actLcd();    break;
+        case B_QUIT:   quit = true; break;
         case B_SLOWER: actPace(-1); break;
         case B_FASTER: actPace(+1); break;
         case B_HELP:   actHelp();   break;
@@ -164,7 +169,7 @@ const char* buttonLabel(int id) {
     switch (id) {
         case B_PAUSE:  return paused ? "RESUME" : "PAUSE";
         case B_NIGHT:  return "NIGHT";
-        case B_LCD:    return "LCD";
+        case B_QUIT:   return "QUIT";
         case B_SLOWER: return "SLOWER";
         case B_FASTER: return "FASTER";
         default:       return "HELP";
@@ -185,14 +190,24 @@ void drawPanel() {
     }
     char b[48];
     char* p = gfx::putInt(gfx::putStr(b, "SPD "), pace);
-    p = gfx::putStr(gfx::putStr(p, " NIGHT "), nightName());
-    gfx::putStr(gfx::putStr(p, " LCD "), fastLcd ? "FAST" : "SAFE");
+    gfx::putStr(gfx::putStr(p, "  NIGHT "), nightName());
     gfx::text(8, INFO_Y, b, 2, COL_DIM);
     gfx::text(8, INFO_Y + 22, "UP JUMP  DOWN DUCK  CLEAR QUIT", 1, COL_DIM);
 }
 
 void drawHeader() {
     gfx::fillRect(0, 0, gfx::W, HEADER_H, COL_BG);
+    if (debugInput) {
+        // P: key-state poll sees UP/EXE   H: jump hold in frames   then counts of press / held / release events
+        char b[48];
+        char* p = gfx::putInt(gfx::putStr(b, "P"), dbgPollUp ? 1 : 0);
+        p = gfx::putInt(gfx::putStr(p, " H"), jumpEvt);
+        p = gfx::putInt(gfx::putStr(p, " DN"), dbgPressEvents);
+        p = gfx::putInt(gfx::putStr(p, " HLD"), dbgHeldEvents);
+        gfx::putInt(gfx::putStr(p, " REL"), dbgReleaseEvents);
+        gfx::text(8, 13, b, 2, COL_MSG);
+        return;
+    }
     gfx::text(8, 13, msg[0] ? msg : "DINO RUN", 2, msg[0] ? COL_MSG : COL_TEXT);
 }
 
@@ -204,10 +219,10 @@ void drawHelp() {
         ".      PAUSE",
         "+ -    GAME SPEED",
         "4      DAY / NIGHT MODE",
-        "5      LCD SAFE / FAST",
+        "6      INPUT DEBUG",
         "=      HELP   CLEAR  QUIT",
         "DUCK UNDER LOW PTEROS,",
-        "JUMP THE REST. TAP TO CLOSE",
+        "JUMP THE REST.  TAP: CLOSE",
     };
     gfx::fillRect(0, FIELD_Y, gfx::W, dino::VIEW_H, COL_HELP);
     int y = FIELD_Y + 10;
@@ -219,24 +234,22 @@ void drawHelp() {
     }
 }
 
-// Pushes the screen to the LCD. Safe mode = the OS routine (whole screen). Fast mode
-// writes only the playfield rows through the LCD controller window; it is opt-in
-// because it relies on the LCD window semantics that the SDK does not document.
-void present(bool fieldOnly) {
+// Sends the VRAM rows y0..y1 (full width) to the LCD through the controller window, which is
+// much less data than LCD_Refresh() (the whole 320x528 screen). The first frame of the app uses
+// LCD_Refresh() once so every pixel is known to be on the panel.
+void pushRows(int y0, int y1) {
 #ifdef DINO_HOST
-    if (fastLcd && fieldOnly && !fullRefresh) { host_present_rows(FIELD_Y, FIELD_Y + dino::VIEW_H - 1); return; }
+    host_present_rows(y0, y1);
 #else
-    if (fastLcd && fieldOnly && !fullRefresh) {
-        constexpr int y0 = FIELD_Y, y1 = FIELD_Y + dino::VIEW_H - 1;
-        LCD_SetDrawingBounds(0, gfx::W - 1, y0, y1);
-        LCD_SendCommand(COMMAND_PREPARE_FOR_DRAW_DATA);
-        const uint16_t* p = gfx::fb + y0 * gfx::W;
-        for (int n = dino::VIEW_H * gfx::W; n > 0; --n) *lcd_data_port = *p++;
-        return;
+    LCD_SetDrawingBounds(0, gfx::W - 1, y0, y1);
+    LCD_SendCommand(COMMAND_PREPARE_FOR_DRAW_DATA);
+    const uint16_t* p = gfx::fb + y0 * gfx::W;
+    int n = (y1 - y0 + 1) * gfx::W;                      // a multiple of 8: 320 pixels per row
+    for (; n >= 8; n -= 8, p += 8) {
+        *lcd_data_port = p[0]; *lcd_data_port = p[1]; *lcd_data_port = p[2]; *lcd_data_port = p[3];
+        *lcd_data_port = p[4]; *lcd_data_port = p[5]; *lcd_data_port = p[6]; *lcd_data_port = p[7];
     }
 #endif
-    LCD_Refresh();
-    fullRefresh = false;
 }
 
 void spin() {
@@ -293,20 +306,22 @@ void onKey(int code) {
         case KEYCODE_PLUS:        actPace(+1); break;
         case KEYCODE_MINUS:       actPace(-1); break;
         case KEYCODE_4:           actNight(); break;
-        case KEYCODE_5:           actLcd(); break;
+        case KEYCODE_6:           actDebug(); break;
         case KEYCODE_EQUALS:      actHelp(); break;
         default: break;
     }
 }
 
-// Any key event: remembers whether the jump / duck keys are down, then handles fresh presses.
+// Any key event: remembers what the events said about the jump / duck keys this frame (the last
+// event wins), then handles fresh presses.
 void onKeyEvent(int dir, int code) {
     const bool down = dir != KEY_RELEASED;
-    if (code == KEYCODE_UP || code == KEYCODE_EXE) jumpSeen = down;
-    else if (code == KEYCODE_DOWN) duckSeen = down;
-    if (!down) {
-        if (code == KEYCODE_UP || code == KEYCODE_EXE) jumpEvt = 0;
-        else if (code == KEYCODE_DOWN) duckEvt = 0;
+    const bool jumpKey = code == KEYCODE_UP || code == KEYCODE_EXE;
+    if (jumpKey) {
+        jumpSeenEv = down; jumpRelEv = !down;
+        if (dir == KEY_PRESSED) ++dbgPressEvents; else if (dir == KEY_HELD) ++dbgHeldEvents; else ++dbgReleaseEvents;
+    } else if (code == KEYCODE_DOWN) {
+        duckSeenEv = down; duckRelEv = !down;
     }
     if (dir == KEY_PRESSED) onKey(code);
 }
@@ -358,25 +373,20 @@ int main() {
         host_frame_start();
 #endif
         const bool idleBlock = paused || helpOpen;
-        ++frameNo;
-        const bool held = jumpEvt > 0 || duckEvt > 0 || touchJump || touchDuck;
-        if (idleBlock || !held || frameNo % HELD_SAMPLE_EVERY == 0) {       // sample the input system
-            jumpSeen = duckSeen = false;
-            pollEvents(idleBlock);
-            if (quit) break;
-            jumpSeen = jumpSeen || keyDown(ScancodeUp) || keyDown(ScancodeEXE);
-            duckSeen = duckSeen || keyDown(ScancodeDown);
-            jumpEvt = jumpSeen ? HOLD_FRAMES : 0;
-            duckEvt = duckSeen ? HOLD_FRAMES : 0;
-        }
+        jumpSeenEv = jumpRelEv = duckSeenEv = duckRelEv = false;
+        pollEvents(idleBlock);
+        if (quit) break;
+        dbgPollUp = keyDown(ScancodeUp) || keyDown(ScancodeEXE);
+        const bool pollDown = keyDown(ScancodeDown);
+        if (dbgPollUp || jumpSeenEv) jumpEvt = HOLD_FRAMES; else if (jumpRelEv) jumpEvt = 0; else if (jumpEvt > 0) --jumpEvt;
+        if (pollDown || duckSeenEv)  duckEvt = HOLD_FRAMES; else if (duckRelEv) duckEvt = 0; else if (duckEvt > 0) --duckEvt;
+        if (debugInput) headerDirty = true;
 
         dino::Input in;
         in.jumpPress = evJump;
         in.jumpHeld  = jumpEvt > 0 || touchJump;
         in.duckHeld  = duckEvt > 0 || touchDuck;
         evJump = false;
-        if (jumpEvt > 0) --jumpEvt;
-        if (duckEvt > 0) --duckEvt;
 
         const bool animating = !paused && !helpOpen && game.phase != dino::PH_DEAD;
         if (!paused && !helpOpen) {
@@ -397,15 +407,24 @@ int main() {
             }
         }
 
-        const bool chrome = headerDirty || panelDirty;
-        if (headerDirty) { drawHeader(); headerDirty = false; }
-        if (panelDirty)  { drawPanel();  panelDirty = false; }
+        const bool needHeader = headerDirty, needPanel = panelDirty;
+        if (needHeader) { drawHeader(); headerDirty = false; }
+        if (needPanel)  { drawPanel();  panelDirty = false; }
+        bool fieldChanged = false;
         if (helpOpen) {
-            if (fieldDirty) { drawHelp(); fieldDirty = false; present(false); }
-        } else if (animating || fieldDirty || chrome) {
+            if (fieldDirty) { drawHelp(); fieldDirty = false; fieldChanged = true; }
+        } else if (animating || fieldDirty) {
             render::drawField(game, FIELD_Y, paused);
             fieldDirty = false;
-            present(!chrome);
+            fieldChanged = true;
+        }
+        if (firstPresent) {
+            LCD_Refresh();
+            firstPresent = false;
+        } else {
+            if (needHeader)   pushRows(0, HEADER_H - 1);
+            if (needPanel)    pushRows(PANEL_Y, gfx::H - 1);
+            if (fieldChanged) pushRows(FIELD_Y, FIELD_Y + dino::VIEW_H - 1);
         }
         if (!idleBlock) spin();
     }
